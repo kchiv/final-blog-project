@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>edit post</h2>
+
+  {% if error %}
+
+  <h2 class="error">{{error}}</h2>
+
+  {% endif %}
+
+
+    <form method="post">
+      <label>
+        <div>subject</div>
+        <input type="text" name="subject" value="{{subject}}">
+      </label>
+
+      <label>
+        <div>blog</div>
+        <textarea name="content">{{content}}</textarea>
+      </label>
+
+      <input type="submit">
+    </form>
+    <br>
+    <a href="/blog/{{post_id}}">Cancel</a>
+{% endblock %}

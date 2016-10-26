@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+	{{editlink | safe}}
+	{{deletelink | safe}}
+  {{post.render() | safe}}
+
+  <br>
+  {% if like_error %}
+  <div class="error">{{like_error}}</div>
+  {% endif %}
+  <div></div>
+  <form method="post">
+    <input type="hidden" name="like" value="update">
+    <button type="submit">
+    {% if likes < 2 %}
+    {{likes}} Like
+    {% else %}
+    {{likes}} Likes
+    {% endif %}
+    </button>
+  </form>
+  <br>
+    {% if comment_error %}
+      <div class="error">{{comment_error}}</div>
+    {% endif %}
+  <br>
+  <form method="post">
+    <label>
+    <div>Comment:</div>
+    <input type="text" name="comment" value="{{comment}}">
+    </label>
+    <input type="submit">
+  </form>
+  <div>
+    <h2>
+    {% if comment_count < 2 %}
+    {{comment_count}} Comment
+    {% else %}
+    {{comment_count}} Comments
+    {% endif %}
+    </h2>
+  </div>
+  {% for c in comment_feed %}
+    <div>
+      <p>User: {{ c.getUserName() }}</p>
+      <p>Comment Date: {{ c.created.strftime("%b %d, %Y") }}</p>
+      <p>{{ c.comment }}</p>
+    </div>
+    <a href="/blog/deletecomment/{{post.key().id()}}/{{c.key().id()}}">Delete</a>
+    <a href="/blog/editcomment/{{post.key().id()}}/{{c.key().id()}}">Edit</a>
+    <hr>
+  {% endfor %}
+{% endblock %}
