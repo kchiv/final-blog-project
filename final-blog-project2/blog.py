@@ -1,22 +1,16 @@
-import os
 import re
-import random
-import hashlib
 import hmac
-from string import letters
-
 import webapp2
-import jinja2
+import jinjatemp
+from user import User
+from post import Post
+from comment import Comments
+from likes import Likes
 
 from google.appengine.ext import db
 
-template_dir = os.path.join(os.path.dirname(__file__), 'templates')
-jinja_env = jinja2.Environment(loader = jinja2.FileSystemLoader(template_dir),
-                               autoescape = True)
-
-def render_str(template, **params):
-    t = jinja_env.get_template(template)
-    return t.render(params)
+import os
+import jinja2
 
 secret = 'imsosecret'
 
@@ -36,7 +30,7 @@ class BlogHandler(webapp2.RequestHandler):
 
     def render_str(self, template, **params):
         params['user'] = self.user
-        return render_str(template, **params)
+        return jinjatemp.temp_render_str(template, **params)
 
     def render(self, template, **kw):
         self.write(self.render_str(template, **kw))
@@ -70,98 +64,8 @@ def render_post(response, post):
     response.out.write('<b>' + post.subject + '</b><br>')
     response.out.write(post.content)
 
-def make_salt(length = 5):
-    # Make random salt
-    return ''.join(random.choice(letters) for x in xrange(length))
-
-def make_pw_hash(name, pw, salt = None):
-    # Hash a password with a salt
-    if not salt:
-        salt = make_salt()
-    h = hashlib.sha256(name + pw + salt).hexdigest()
-    return '%s,%s' % (salt, h)
-
-def valid_pw(name, password, h):
-    # Check wether password is correct
-    salt = h.split(',')[0]
-    return h == make_pw_hash(name, password, salt)
-
-def users_key(group = 'default'):
-    return db.Key.from_path('users', group)
-
-class User(db.Model):
-    first_name = db.StringProperty(required = True)
-    last_name = db.StringProperty(required = True)
-    name = db.StringProperty(required = True)
-    pw_hash = db.StringProperty(required = True)
-    email = db.StringProperty()
-
-    @classmethod
-    def by_id(cls, uid):
-        # Find a user by their ID
-        return User.get_by_id(uid, parent = users_key())
-
-    @classmethod
-    def by_name(cls, name):
-        # Find a user by their name
-        u = db.GqlQuery("SELECT * FROM User WHERE name = :1", name).get()
-        return u
-
-    @classmethod
-    def register(cls, first_name, last_name, name, pw, email = None):
-        # Returns instance of the 'User' object
-        pw_hash = make_pw_hash(name, pw)
-        return User(parent = users_key(),
-                    first_name = first_name,
-                    last_name = last_name,
-                    name = name,
-                    pw_hash = pw_hash,
-                    email = email)
-
-    @classmethod
-    def login(cls, name, pw):
-        # Returns user if they input valid password
-        u = cls.by_name(name)
-        if u and valid_pw(name, pw, u.pw_hash):
-            return u
-
 def blog_key(name = 'default'):
     return db.Key.from_path('blogs', name)
-
-class Post(db.Model):
-    user_id = db.IntegerProperty(required = True)
-    subject = db.StringProperty(required = True)
-    content = db.TextProperty(required = True)
-    created = db.DateTimeProperty(auto_now_add = True)
-    last_modified = db.DateTimeProperty(auto_now = True)
-
-    def render(self):
-        # Replace new line with line break for post content
-        self._render_text = self.content.replace('\n', '<br>')
-        return render_str("post.html", p = self)
-
-    def getUserName(self):
-        # Gets user by ID and returns first and last name
-        user = User.by_id(self.user_id)
-        full_name = "%s %s" % (user.first_name, user.last_name)
-        return full_name
-
-class Comments(db.Model):
-    user_id = db.IntegerProperty(required = True)
-    post_id = db.IntegerProperty(required = True)
-    comment = db.TextProperty(required = True)
-    created = db.DateTimeProperty(auto_now_add = True)
-    last_modified = db.DateTimeProperty(auto_now = True)
-
-    def getUserName(self):
-        # Gets user by ID and returns first and last name
-        user = User.by_id(self.user_id)
-        full_name = "%s %s" % (user.first_name, user.last_name)
-        return full_name
-
-class Likes(db.Model):
-    user_id = db.IntegerProperty(required = True)
-    post_id = db.IntegerProperty(required = True)
 
 class BlogFront(BlogHandler):
     def get(self):
@@ -181,20 +85,16 @@ class PostPage(BlogHandler):
                                     post_id)
         like_count = like_lookup.count()
 
-        editlink = '<a href="/blog/editpost/%s">Edit Post</a>' % post_id
-        deletelink = '<a href="/blog/deletepost/%s">Delete Post</a>' % post_id
-
         if not post:
             # If the post does not exist return 404
             self.error(404)
+            self.write("This post does not exist!")
             return
 
         # Only show edit and delete buttons to signed in users
         if self.user:
             self.render("permalink.html",
                         post = post,
-                        editlink = editlink,
-                        deletelink = deletelink,
                         comment_feed = comment_feed,
                         comment_count = comment_count,
                         likes = like_count)
@@ -219,6 +119,7 @@ class PostPage(BlogHandler):
         if not post:
             # If the post does not exist return a 404
             self.error(404)
+            self.write("This post does not exist!")
             return
 
         c = ""
@@ -315,7 +216,12 @@ class EditPost(BlogHandler):
             # If user exists render edit post page else redirect to login
             key = db.Key.from_path('Post', int(post_id), parent=blog_key())
             post = db.get(key)
-            if post.user_id == self.user.key().id():
+            if not post:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This post does not exist!")
+                return
+            elif post.user_id == self.user.key().id():
                 self.render("edit-post.html", subject = post.subject,
                             content = post.content, post_id = post_id)
             else:
@@ -335,10 +241,23 @@ class EditPost(BlogHandler):
             # If subject and content exists put content in datastore
             key = db.Key.from_path('Post', int(post_id), parent=blog_key())
             post = db.get(key)
-            post.subject = subject
-            post.content = content
-            post.put()
-            self.redirect('/blog/%s' % post_id)
+            if not post:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This post does not exist!")
+                return
+            else:
+                post.subject = subject
+                post.content = content
+                if post.user_id == self.user.key().id():
+                    post.put()
+                    self.redirect('/blog/%s' % post_id)
+                else:
+                    error = "You can only edit your own posts!"
+                    self.render("edit-post.html",
+                                subject = subject,
+                                content = content,
+                                error = error)
         else:
             error = "You need a title and content for your post!"
             self.render("edit-post.html",
@@ -353,7 +272,12 @@ class DeletePost(BlogHandler):
             # then remove post from datastore
             key = db.Key.from_path('Post', int(post_id), parent = blog_key())
             post = db.get(key)
-            if post.user_id == self.user.key().id():
+            if not post:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This post does not exist!")
+                return
+            elif post.user_id == self.user.key().id():
                 post.delete()
                 success = "Your post has been succesfully deleted!"
                 self.render("delete-post.html", success = success)
@@ -373,7 +297,12 @@ class EditComment(BlogHandler):
                                     int(comment_id),
                                     parent = blog_key())
             c = db.get(key)
-            if c.user_id == self.user.key().id():
+            if not c:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This post does not exist!")
+                return
+            elif c.user_id == self.user.key().id():
                 self.render("edit-comments.html", comment = c.comment)
             else:
                 error = "You can only edit your own comments."
@@ -394,9 +323,21 @@ class EditComment(BlogHandler):
                                     int(comment_id),
                                     parent = blog_key())
             c = db.get(key)
-            c.comment = comment
-            c.put()
-            self.redirect("/blog/%s" % post_id)
+            if not c:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This comment does not exist!")
+                return
+            elif c.user_id == self.user.key().id():
+                c.comment = comment
+                c.put()
+                self.redirect('/blog/%s' % post_id)
+            else:
+                error = "You can only edit your own comments!"
+                self.render("edit-comments.html",
+                            subject = subject,
+                            content = content,
+                            error = error)
         else:
             error = "Please provide a comment!"
             self.render("edit-comments.html", error = error)
@@ -410,7 +351,12 @@ class DeleteComment(BlogHandler):
                                     int(comment_id),
                                     parent = blog_key())
             c = db.get(key)
-            if c.user_id == self.user.key().id():
+            if not c:
+                # If the post does not exist return 404
+                self.error(404)
+                self.write("This comment does not exist!")
+                return
+            elif c.user_id == self.user.key().id():
                 c.delete()
                 self.redirect("/blog/%s" % post_id)
             else:
